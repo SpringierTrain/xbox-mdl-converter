@@ -170,6 +170,14 @@ def convert(pc_path,out_path,reduce=False,mat_override=None):
         pad(4)
         struct.pack_into("<i",out,s+80,wl_pos-s)   # weightlistindex (rel to seq base)
         struct.pack_into("<i",out,s+32,bl_pos-s)   # animindexindex   (rel to seq base)
+        bi=bl_pos-s
+        # these index fields were inherited stale from the template and pointed into the
+        # adjacent seqdesc (100B stride) -> engine read neighbouring bytes as pose data ->
+        # corrupt angles. point them at the in-seq anim-index region, matching stock multi-frame.
+        struct.pack_into("<i",out,s+16,bi<<8)
+        struct.pack_into("<i",out,s+76,bi<<8)
+        struct.pack_into("<i",out,s+88,bi<<8)
+        struct.pack_into("<i",out,s+92,bi+4)
     # ---- bodypart/model/mesh ----
     pad(4); bp_off=len(out)
     out+=bytearray(12)
