@@ -1,5 +1,8 @@
 # PC -> Original Xbox model conversion
 
+This is an AI-Generated tool. I do not take any credit for the output presented here.
+Made using Opus 4.8
+
 Converts a PC Half-Life 2 model (studiohdr **v44**) to the Original Xbox
 format (studiohdr **v47**) so it loads on a real Xbox / xemu via a zip1 override.
 
