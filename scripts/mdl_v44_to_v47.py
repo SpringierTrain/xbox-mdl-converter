@@ -135,17 +135,23 @@ def convert(pc_path,out_path,reduce=False,mat_override=None):
     emit_seqs  = seqs[:1]  if reduce else seqs
     na_out=len(emit_anims); ns_out=len(emit_seqs)
     pad(4); anim_base=len(out)
-    for an in emit_anims:
+    anim_descs=[]
+    for an in emit_anims:                      # phase 1: contiguous 32B descriptors
         a=len(out); rec=bytearray(32)
-        struct.pack_into("<i",rec,0,-a)
+        struct.pack_into("<i",rec,0,-a)         # baseptr
         out+=rec
         putname(a+4,a,an["name"])
         struct.pack_into("<f",out,a+8,an["fps"]); struct.pack_into("<i",out,a+12,an["flags"])
         struct.pack_into("<i",out,a+16,an["numframes"])
-        out+=an["track"]
-    # ---- seqs ---- (transplant wood_fence's known-good 100B header, patch for nb bones -> anim 0)
+        anim_descs.append((a,an))
+    for (a,an) in anim_descs:                   # phase 2: pooled track data + animindex@24
+        tpos=len(out); out+=an["track"]
+        struct.pack_into("<i",out,a+24,(tpos-a)<<8)   # animindex (track offset rel desc), <<8 encoding
+    # ---- seqs ---- (fixed 100B headers + pooled weightlist/blend tables)
     WF=bytes.fromhex("9cfcffffb901000050010000000000000064000009d235c047d40952384047547000000000000000ffffffffffffffff0100010100000000000000000000663266320000ffffffff00000000006400006400000000000000007000007400000000000000")
     pad(4); seq_base=len(out)
+    for (a,an) in anim_descs:                   # now seqindex known: regiondist@20 = (seqindex-desc)<<8
+        struct.pack_into("<i",out,a+20,(seq_base-a)<<8)
     seq_hdrs=[]
     for sq in emit_seqs:                       # phase 1: contiguous 100B headers (fixed stride)
         s=len(out); hdr=bytearray(WF)
