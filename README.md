@@ -1,4 +1,6 @@
-# PC -> Original Xbox model conversion
+# PC -> Original Xbox Half-Life 2 model conversion
+
+This is for the **Original** XBox, if you wish to convert for the XBox 360, use MakeGameData instead.
 
 This is an AI-Generated tool. I do not take any credit for the output presented here.
 Made using Opus 4.8
@@ -74,10 +76,14 @@ also built a `.phx` (via `phy2phx.py`) and injected prop_data.
 ## Limitations / gotchas
 
 - **Material must already be in Xbox form.** A custom material that's a PC `.vtf`
-  won't render. metalPot worked because its material was stock and on the disc.
+  won't render. You can find a guide [here](https://docs.google.com/document/d/1Zw3uZYdpCWaGxMtJ3-IRgayM9HIWiHyTJN0N16T3j30/edit?usp=sharing).
 - **Animations don't play yet.** The model renders in its reference pose; the
   v47 animation-descriptor track pointer isn't cracked, so multi-anim builds are
   experimental. Skeleton, skinning, and geometry are fully working.
 - **Bone count:** the v44->v47 bone struct fix (i16 parent, bone flags @140,
   surfaceprop@152/contents@156) applies to every multi-bone model.
 - **Attachments / flexes / pose params** are dropped (not needed to render).
+
+## Resources
+- [Original XBox "Half-Life 2" Modding](https://discord.gg/u4UKEcWZ2V)
+- [Xbox 360 "The Orange Box" Modding](https://discord.gg/Py9FpHakRH)
