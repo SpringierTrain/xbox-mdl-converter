@@ -25,7 +25,7 @@ class Pool:
         if x in s.m: return s.m[x]
         o=len(s.buf); s.buf+=x+b"\x00"; s.m[x]=o; return o
 
-def convert(pc_path,out_path,reduce=False,mat_override=None):
+def convert(pc_path,out_path,reduce=False,mat_override=None,pick_seq=None,root_lod=None):
     d=open(pc_path,"rb").read(); g=lambda k: I(d,V44[k])
     nb=g("numbones"); bi=g("boneindex"); nhs=g("numhitbox"); hsi=g("hitboxindex")
     na=g("numanim"); ai=g("animindex"); ns=g("numseq"); si=g("seqindex")
@@ -70,11 +70,16 @@ def convert(pc_path,out_path,reduce=False,mat_override=None):
             flags=I(d,sq+12),bbmin=f3(d,sq+32),bbmax=f3(d,sq+44),numblends=I(d,sq+56),
             groupsize=gs,blends=blends,
             weights=[struct.unpack_from("<f",d,sq+I(d,sq+156)+4*j)[0] for j in range(nb)]))
-    # bodypart/model/mesh (single chain)
+    # bodypart/model/mesh (single bodypart; N meshes supported)
     bp=bpi; bpname=cstr(d,bp+I(d,bp)); model=bp+I(d,bp+12)
     mname=cstr(d,model)            # v44 model name is inline char[64]
     nummeshes=I(d,model+72); meshindex=I(d,model+76); model_numverts=I(d,model+80)
-    mesh=model+meshindex
+    MESH_STRIDE=116                # v44 mstudiomesh_t
+    pcmeshes=[]                    # per-mesh: material + numLODVertexes[8]
+    for mi in range(nummeshes):
+        me=model+meshindex+mi*MESH_STRIDE
+        pcmeshes.append(dict(material=I(d,me+0),
+                             numLODVertexes=[I(d,me+52+4*k) for k in range(8)]))
     # textures
     texs=[]
     for k in range(ntex):
@@ -89,8 +94,7 @@ def convert(pc_path,out_path,reduce=False,mat_override=None):
     hull=(f3(d,V44["hmin"]),f3(d,V44["hmax"])); view=(f3(d,V44["vmin"]),f3(d,V44["vmax"]))
     eye=f3(d,V44["eye"]); illum=f3(d,V44["illum"])
 
-    # ---- v44 mesh fields for v47 (material, numverts, vertexoffset, numLODVertexes) ----
-    m_material=I(d,mesh); m_numverts=I(d,mesh+8); m_vertoffset=I(d,mesh+12)
+    # ---- (mesh fields parsed above into pcmeshes; rootLOD numverts computed at emit) ----
 
     # ================= EMIT v47 =================
     out=bytearray(208)
@@ -131,8 +135,18 @@ def convert(pc_path,out_path,reduce=False,mat_override=None):
     # ---- bonetablebyname ----
     pad(1); btbn=len(out); out+=bytes(sorted(range(nb)))  # identity sort (names already ordered)
     # ---- anims ----
-    emit_anims = anims[:1] if reduce else anims
-    emit_seqs  = seqs[:1]  if reduce else seqs
+    if reduce and pick_seq is not None:
+        # keep ONE chosen sequence and the animation it references, so the model
+        # rests in that pose instead of seq0/anim0 (idle). Remap the kept seq's
+        # blend indices to 0 (the single emitted anim becomes index 0).
+        sq = dict(seqs[pick_seq])
+        anim_idx = sq["blends"][0] if sq["blends"] else 0
+        emit_anims = [anims[anim_idx]]
+        sq["blends"] = [0] * len(sq["blends"])
+        emit_seqs = [sq]
+    else:
+        emit_anims = anims[:1] if reduce else anims
+        emit_seqs  = seqs[:1]  if reduce else seqs
     na_out=len(emit_anims); ns_out=len(emit_seqs)
     pad(4); anim_base=len(out)
     anim_descs=[]
@@ -187,14 +201,42 @@ def convert(pc_path,out_path,reduce=False,mat_override=None):
     out[bp_off+9]=12; out[bp_off+10]=0; out[bp_off+11]=0   # modelindex i24 = 12 (model follows)
     model_off=len(out); out+=bytearray(44)
     putname(model_off+0,model_off,mname)
-    struct.pack_into("<i",out,model_off+12,44)    # meshindex (mesh right after model)
-    struct.pack_into("<H",out,model_off+16,nummeshes); struct.pack_into("<H",out,model_off+18,model_numverts)
-    mesh_off=len(out); out+=bytearray(64)
-    struct.pack_into("<i",out,mesh_off+0,m_material)
-    struct.pack_into("<i",out,mesh_off+4,model_off-mesh_off)
-    struct.pack_into("<i",out,mesh_off+8,m_numverts)
-    struct.pack_into("<i",out,mesh_off+12,m_vertoffset)
-    for j in range(8): struct.pack_into("<H",out,mesh_off+48+2*j,m_numverts)
+    struct.pack_into("<i",out,model_off+12,44)    # meshindex (meshes right after model)
+    # rootLOD for the MDL meshes: mirror the VVD/VTX rule. numLODs isn't stored in the MDL,
+    # so derive the count of distinct LOD slots from the per-mesh numLODVertexes when not given.
+    if root_lod is None:
+        # number of LODs = length of the longest strictly/loosely-decreasing prefix is unreliable;
+        # default to the Xbox rule min(2, numLODs-1) using the model's own numLOD slots.
+        # numLODVertexes[k]==numLODVertexes[k+1] tail marks padding; count real LODs:
+        nlods=8
+        for k in range(7,0,-1):
+            if any(m["numLODVertexes"][k]!=m["numLODVertexes"][k-1] for m in pcmeshes):
+                nlods=k+1; break
+        else:
+            nlods=1
+        rl=min(2, nlods-1)
+    else:
+        rl=root_lod
+    # per-mesh rootLOD vertex count + cumulative vertexoffset within the (gathered) model pool
+    voff=0; emit_meshes=[]
+    for pm in pcmeshes:
+        nv_root=pm["numLODVertexes"][rl]
+        emit_meshes.append(dict(material=pm["material"], numverts=nv_root, vertexoffset=voff,
+                                numLODVertexes=pm["numLODVertexes"]))
+        voff+=nv_root
+    model_numverts_root=voff
+    struct.pack_into("<H",out,model_off+16,nummeshes)
+    struct.pack_into("<H",out,model_off+18,model_numverts_root)
+    for em in emit_meshes:
+        mesh_off=len(out); out+=bytearray(64)
+        struct.pack_into("<i",out,mesh_off+0,em["material"])
+        struct.pack_into("<i",out,mesh_off+4,model_off-mesh_off)   # modelindex (rel)
+        struct.pack_into("<i",out,mesh_off+8,em["numverts"])
+        struct.pack_into("<i",out,mesh_off+12,em["vertexoffset"])
+        # numLODVertexes[8]: flatten [0..rl-1] to the rootLOD count (matches the clamped VVD)
+        flat=list(em["numLODVertexes"])
+        for k in range(rl): flat[k]=em["numverts"]
+        for j in range(8): struct.pack_into("<H",out,mesh_off+48+2*j,flat[j]&0xFFFF)
     # ---- textures ----
     pad(4); tex_off=len(out)
     for tname in texs:

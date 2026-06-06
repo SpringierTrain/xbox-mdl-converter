@@ -44,25 +44,37 @@ def convert(pc_path, out_path, force_checksum=None, collapse=False, vert_perm=No
                        with the matching inverse so the pair stays self-consistent."""
     d = open(pc_path, "rb").read()
     h = analyze(d)
-    if h["numFixups"] != 0:
-        raise NotImplementedError(
-            f"{pc_path}: numFixups={h['numFixups']} (multi-mesh) needs the "
-            "fixup re-gather + bone remap path (skinned/Alyx milestone)")
 
     rootLOD = min(MINLOD if root_lod is None else root_lod, h["numLODs"] - 1)
     keep    = h["lodv"][rootLOD]
     checksum = h["checksum"] if force_checksum is None else force_checksum
 
-    vsrc = d[h["vstart"]: h["vstart"] + keep * VERT]
-    tsrc = d[h["tstart"]: h["tstart"] + keep * TAN]
-    assert len(vsrc) == keep * VERT, "vertex block short read"
-    assert len(tsrc) == keep * TAN, "tangent block short read"
+    # Gather the rootLOD vertex set. For numFixups==0 the kept verts are simply the
+    # first `keep` records; for numFixups>0 (multi-mesh / skinned) they are scattered
+    # and must be gathered per Valve's vertex-fixup table (Studio_LoadVertexes):
+    # walk fixups in table order, and for every fixup whose lod >= rootLOD copy
+    # [sourceVertexID, +numVertexes) into the flat output. (Verified 311/311 in suite:
+    # the gathered count equals keep and the PC VTX rootLOD origMeshVertIDs index it.)
+    if h["numFixups"] == 0:
+        order = list(range(keep))
+    else:
+        order = []
+        for i in range(h["numFixups"]):
+            lod, src, num = struct.unpack_from("<3i", d, h["fixupStart"] + i*12)
+            if lod >= rootLOD:
+                order.extend(range(src, src + num))
+        assert len(order) == keep, \
+            f"fixup gather produced {len(order)} verts, expected keep={keep}"
+
+    vsrc = d[h["vstart"]:]; tsrc = d[h["tstart"]:]
+    vget = lambda i: vsrc[i*VERT:(i+1)*VERT]
+    tget = lambda i: tsrc[i*TAN:(i+1)*TAN]
     if vert_perm is not None:
         assert len(vert_perm) == keep, "vert_perm length must equal keep"
-        vblock = b"".join(vsrc[old*VERT:(old+1)*VERT] for old in vert_perm)
-        tblock = b"".join(tsrc[old*TAN:(old+1)*TAN] for old in vert_perm)
-    else:
-        vblock, tblock = vsrc, tsrc
+        order = [order[p] for p in vert_perm]
+    vblock = b"".join(vget(i) for i in order)
+    tblock = b"".join(tget(i) for i in order)
+    assert len(vblock) == keep * VERT and len(tblock) == keep * TAN, "gather short read"
 
     out_numLODs = 1 if collapse else h["numLODs"]
     new_vstart = 80                               # 16-aligned (matches Xbox)

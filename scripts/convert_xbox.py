@@ -9,10 +9,16 @@ Usage:
                        (expects <base>.mdl, <base>.vvd, and a dx90 VTX named
                         either <base>.dx90.vtx or <base>_dx90.vtx)
   <out_dir>            where the Xbox triplet is written
-  --full               emit ALL anims/seqs in the MDL (EXPERIMENTAL: animation
-                       track pointers are not yet cracked, so anims won't play
-                       and the model may not load. Default is the proven
-                       single-idle build that renders correctly.)
+  --lod N              keep LOD N (0=full, 1=medium) instead of the Xbox default
+                       min(2,numLODs-1). Default reproduces Valve's geometry for
+                       ~95% of multi-LOD models; use this for the ~4.5% Valve
+                       shipped at higher detail (e.g. handrail04_long needs --lod 1).
+  --full               emit ALL anims/seqs in the MDL. The anim emit (contiguous
+                       descriptors + pooled tracks, animindex@24 and regiondist@20
+                       both <<8-encoded) is verified valid for normal multi-seq
+                       models (e.g. advisor 7/7, combine_scanner 20/12). Huge
+                       animation-holder models (hundreds of anims, e.g.
+                       alyx_gestures) still overflow a u16 pack -- not yet guarded.
 
 Produces in <out_dir>:  <name>.mdl  <name>.vvd  <name>.xbox.vtx
 All three share one checksum (engine requires this). Then pack <out_dir> into
@@ -33,6 +39,13 @@ def main():
     base = sys.argv[1].rsplit(".mdl", 1)[0]      # tolerate a .mdl being passed
     out_dir = sys.argv[2]
     full = "--full" in sys.argv[3:]
+    # --lod N : override the kept detail level. Default (omitted) = Xbox rule
+    # min(2,numLODs-1), which reproduces Valve's choice for ~95% of multi-LOD
+    # models. ~4.5% were shipped at a higher detail (Valve's per-model decision,
+    # not recoverable from the PC files); pass --lod 0 or --lod 1 to match those.
+    root_lod = None
+    if "--lod" in sys.argv[3:]:
+        root_lod = int(sys.argv[sys.argv.index("--lod") + 1])
     os.makedirs(out_dir, exist_ok=True)
     name = os.path.basename(base)
 
@@ -55,7 +68,7 @@ def main():
 
     # 1) VVD + VTX
     lod = _load("lod_convert")
-    r = lod.convert_model(base, out_dir)
+    r = lod.convert_model(base, out_dir, root_lod=root_lod)
     print("VVD+VTX:", {k: r[k] for k in ("numvertices", "out_numLODs", "checksum",
                                          "indices") if k in r})
 
@@ -78,8 +91,9 @@ def main():
     print("Pack the output dir into zip1 with build_xzp.py, keeping the")
     print("models/<path>/ folder structure intact.")
     if full:
-        print("\n[--full] WARNING: multi-anim track pointers are not yet solved;")
-        print("this build is experimental and may not load on hardware.")
+        print("\n[--full] NOTE: multi-anim emit is verified for normal multi-seq")
+        print("models; animation-holder models with hundreds of anims may overflow")
+        print("a u16 pack (not yet guarded). Test on hardware before relying on it.")
 
 if __name__ == "__main__":
     main()
