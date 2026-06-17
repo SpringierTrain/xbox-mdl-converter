@@ -105,8 +105,13 @@ def convert(pc_path, out_path, force_checksum=None, collapse=False, vert_perm=No
     struct.pack_into("<i", out, 60, new_tstart)
     out[new_vstart:new_vstart+len(vblock)] = vblock
     out[new_tstart:new_tstart+len(tblock)] = tblock
+    # Xbox VVD stores total file size at offset 64 (PC leaves this unused).
+    # The engine uses it to size the vertex upload; a 0 here stalls the NV2A
+    # in geom_buffer_update on first draw (model-wide LOS hang).
+    struct.pack_into("<i", out, 64, len(out))
     open(out_path, "wb").write(out)
-    return bytes(out), dict(rootLOD=rootLOD, keep=keep, numLODs=h["numLODs"])
+    return bytes(out), dict(rootLOD=rootLOD, keep=keep, numLODs=h["numLODs"],
+                            lodv=[h["lodv"][k] for k in range(h["numLODs"])])
 
 if __name__ == "__main__":
     import sys

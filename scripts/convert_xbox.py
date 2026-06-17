@@ -72,9 +72,12 @@ def main():
     print("VVD+VTX:", {k: r[k] for k in ("numvertices", "out_numLODs", "checksum",
                                          "indices") if k in r})
 
-    # 2) MDL
+    # 2) MDL. If the VVD/VTX kept all LODs (multi-LOD skinned/ragdoll, Valve structure),
+    # the MDL must keep every per-LOD vertex count too -> root_lod=0 (no flatten).
     mdl = _load("mdl_v44_to_v47")
-    mdl.convert(pc_mdl, os.path.join(out_dir, name + ".mdl"), reduce=not full)
+    mdl_rl = 0 if r.get("all_lods") else r.get("rootLOD")
+    mdl.convert(pc_mdl, os.path.join(out_dir, name + ".mdl"), reduce=not full,
+                root_lod=mdl_rl)
 
     # 3) validate + checksum consistency
     rd = _load("v47_reader")
@@ -86,8 +89,34 @@ def main():
     cx = cks(os.path.join(out_dir, name + ".xbox.vtx"), 16)
     print("MDL check:", len(chk.errors), "errors,", len(chk.warnings), "warnings")
     print("checksums match:", cm == cv == cx, "(", cm, ")")
+
+    # ---- collision: .phy -> .phx (only if a .phy sits next to the model) ----
+    pc_phy = base + ".phy"
+    phx_made = False
+    if os.path.exists(pc_phy):
+        phy2phx = _load("phy2phx")
+        out_phx = os.path.join(out_dir, name + ".phx")
+        simp = "--simplify-collision" in sys.argv[3:]
+        try:
+            pinfo = phy2phx.convert(pc_phy, out_phx, simplify=simp)
+            phx_made = True
+            cp = cks(out_phx, 12)            # phx checksum lives at +12, must equal model
+            print("PHX:", pinfo["solidCount"], "solid(s),",
+                  pinfo["numConstraints"], "constraint(s); checksum matches MDL:",
+                  cp == cm)
+            if pinfo.get("simplified"):
+                print("     simplified", pinfo["simplified"], "solid(s) via vphysics-style hull reduction")
+            for w in pinfo.get("warnings", []):
+                print("     warning:", w)
+            if pinfo["solidCount"] > 1 or pinfo["numConstraints"]:
+                print("     (multi-solid/ragdoll: collision geometry is copied verbatim,")
+                print("      which is functional but not byte-identical to Valve's recompiled hulls)")
+        except Exception as e:
+            print("PHX: skipped (phy2phx error:", e, ")")
+
     print("\nDone ->", out_dir)
-    print("  ", name + ".mdl,", name + ".vvd,", name + ".xbox.vtx")
+    trip = name + ".mdl, " + name + ".vvd, " + name + ".xbox.vtx"
+    print("   ", trip + (", " + name + ".phx" if phx_made else ""))
     print("Pack the output dir into zip1 with build_xzp.py, keeping the")
     print("models/<path>/ folder structure intact.")
     if full:

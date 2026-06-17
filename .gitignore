@@ -1,0 +1,7 @@
+# Generated
+*.pyc
+scripts/__pycache__
+
+# Testing purposes
+scripts/input
+scripts/output

@@ -42,10 +42,78 @@ _here = os.path.dirname(os.path.abspath(__file__))
 vvd  = _load("vvd_multilod",   os.path.join(_here, "vvd_multilod.py"))
 ext  = _load("vtx_lod_extract",os.path.join(_here, "vtx_lod_extract.py"))
 emit = _load("vtx_emit_skinned", os.path.join(_here, "vtx_emit_skinned.py"))
+emitmm = _load("vtx_emit_multimesh", os.path.join(_here, "vtx_emit_multimesh.py"))
 _DEFAULT_VTX_TEMPLATE = None   # emitter uses its embedded CHAIN94 header
 copt = _load("cache_opt",      os.path.join(_here, "cache_opt.py"))
 
 def _i(d, o): return struct.unpack_from("<i", d, o)[0]
+
+def _convert_multimesh(pc_basepath, out_dir, bps, checksum, root_lod):
+    """Multi-mesh / multi-stripgroup / multi-bodypart (bodygroup) path. VVD via fixup gather;
+       VTX via vtx_emit_multimesh.emit_tree over the full bodypart->model->mesh->sg tree,
+       per-mesh records copied verbatim from the PC dx90 rootLOD (PC order; no cache_opt)."""
+    name = os.path.basename(pc_basepath)
+    # Keep ALL LODs (Valve Xbox structure): full fixup-applied LOD-sorted VVD (numFixups=0,
+    # numLODs preserved), all-LOD VTX tree, MDL per-LOD counts kept. Collapsing to a single
+    # LOD crashes multi-LOD skinned/ragdoll models on hardware (renderer walks the LOD machinery
+    # off the end of the collapsed vertex array). root_lod=0 keeps numLODVertexes[0] = all verts.
+    vout, info = vvd.convert(pc_basepath + ".vvd", os.path.join(out_dir, name+".vvd"),
+                             force_checksum=checksum, collapse=False, root_lod=0)
+    keep = info["keep"]                       # = numLODVertexes[0], full LOD0 vertex count
+    src_numLODs = info["numLODs"]
+    lodv = info.get("lodv")
+
+    def sg_rec(sg):
+        st = sg["strips"][0]
+        return dict(numVerts=sg["numVerts"], numIndices=sg["numIndices"],
+                    verts_bytes=b"".join(v["raw"] for v in sg["verts"]),
+                    indices_bytes=struct.pack(f"<{len(sg['indices'])}H", *sg["indices"]),
+                    numBones=st["numBones"], strip_flags=st["flags"],
+                    sg_flags=sg["flags"], bsc=st["bsc"])
+    # tree: bodypart -> model -> [lod0_meshes, lod1_meshes, ...]  (all LODs)
+    tree = []
+    switchPoints = None
+    omv_by_lod = {}
+    for bp in bps:
+        models = []
+        for mo in bp["models"]:
+            if switchPoints is None:
+                switchPoints = [lo.get("switchPoint", 0.0) for lo in mo["lods"]]
+            lods_out = []
+            for li, lo in enumerate(mo["lods"]):
+                meshes = []
+                for me in lo["meshes"]:
+                    sgs = [sg_rec(sg) for sg in me["stripgroups"]]
+                    for sg in me["stripgroups"]:
+                        for v in sg["verts"]:
+                            omv_by_lod.setdefault(li, []).append(v["origMeshVertID"])
+                    meshes.append(dict(mesh_flags=me["flags"], stripgroups=sgs))
+                lods_out.append(meshes)
+            models.append(lods_out)
+        tree.append(models)
+    xvtx = emitmm.emit_tree_ml(tree, checksum=checksum, numLODs=src_numLODs,
+                               switchPoints=switchPoints)
+    open(os.path.join(out_dir, name+".xbox.vtx"), "wb").write(xvtx)
+
+    assert _i(vout, 16) == keep, "VVD keep mismatch (expected LOD0 count)"
+    assert _i(vout, 8) == _i(xvtx, 16) == checksum, "checksum inconsistent"
+    # per-LOD self-consistency: each LOD's mesh-relative origMeshVertIDs must index within
+    # that LOD's vertex set in the LOD-sorted VVD.
+    if lodv:
+        for li, omvs in omv_by_lod.items():
+            if omvs:
+                assert max(omvs) < lodv[li], \
+                    f"LOD {li}: origMeshVertID {max(omvs)} >= numLODVertexes[{li}]={lodv[li]}"
+    nbp = len(tree); nmodel = sum(len(b) for b in tree)
+    nlod = sum(len(m) for b in tree for m in b)
+    nmesh = sum(len(lo) for b in tree for m in b for lo in m)
+    nsg = sum(len(me["stripgroups"]) for b in tree for m in b for lo in m for me in lo)
+    return dict(name=name, rootLOD=info["rootLOD"], src_numLODs=src_numLODs,
+                numvertices=keep, out_numLODs=src_numLODs, checksum=checksum,
+                vvd_bytes=len(vout), vtx_bytes=len(xvtx),
+                nbodyparts=nbp, nmodels=nmodel, nlods=nlod, nmesh=nmesh, nsg=nsg,
+                cache_optimized=False, multimesh=True, all_lods=True)
+
 
 def convert_model(pc_basepath, out_dir, vtx_template=None, cache_optimize=True, root_lod=None):
     """pc_basepath: path without extension (expects .vvd/.dx90.vtx/.mdl).
@@ -61,6 +129,24 @@ def convert_model(pc_basepath, out_dir, vtx_template=None, cache_optimize=True, 
     pcv, pcvtx, pcmdl = pc_basepath+".vvd", pc_basepath+".dx90.vtx", pc_basepath+".mdl"
     os.makedirs(out_dir, exist_ok=True)
     checksum = _i(open(pcmdl, "rb").read(), 8)   # one consistent checksum for all 3
+
+    # Detect mesh/stripgroup shape at rootLOD. Single mesh+sg -> the proven cache-optimized
+    # single-mesh path. Multi-mesh or multi-stripgroup -> the multi-mesh emitter (verbatim
+    # per-mesh records; cache_opt is single-mesh-only).
+    hdr_v, bps = ext.parse_pc_vtx(open(pcvtx, "rb").read())
+    _root = min(2 if root_lod is None else root_lod, hdr_v["numLODs"] - 1)
+    _meshes = bps[0]["models"][0]["lods"][_root]["meshes"]
+    _nmesh = len(_meshes)
+    _nsg = sum(len(me["stripgroups"]) for me in _meshes)
+    # Route to the all-LODs multimesh path ONLY for genuinely multi-mesh / multi-stripgroup /
+    # multi-bodypart models (skinned chars, bodygroups, multi-material props) -- those need the
+    # per-stripgroup-contiguous layout. Single-mesh single-stripgroup props (static, and
+    # single-mesh prop_dynamic) keep the hardware-verified cache-opt path below, untouched,
+    # regardless of LOD count. (An earlier numLODs>1 clause here pulled proven single-mesh props
+    # onto the new path and regressed them; reverted.)
+    if (len(bps) > 1 or any(len(b["models"]) > 1 for b in bps)
+            or _nmesh > 1 or _nsg > 1):
+        return _convert_multimesh(pc_basepath, out_dir, bps, checksum, root_lod)
 
     g = ext.root_lod_geometry(pcvtx, root_lod=root_lod)
     hkeep = vvd.analyze(open(pcv, "rb").read())

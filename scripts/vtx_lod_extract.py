@@ -44,6 +44,7 @@ def parse_pc_vtx(d):
             for li in range(nLOD):
                 lod = lbase + li*12               # ModelLODHeader_t: numMeshes(i), meshOffset(i), switchPoint(f)
                 nmesh=I(d,lod); meoff=I(d,lod+4); mebase=lod+meoff
+                switchPoint=struct.unpack_from('<f',d,lod+8)[0]
                 meshes=[]
                 for mei in range(nmesh):
                     me = mebase + mei*9           # MeshHeader_t: numStripGroups(i), sgOffset(i), flags(byte)
@@ -74,7 +75,7 @@ def parse_pc_vtx(d):
                         sgs.append(dict(numVerts=nv, numIndices=ni, numStrips=ns, flags=sgflags,
                                         verts=verts, indices=indices, strips=strips))
                     meshes.append(dict(flags=meflags, stripgroups=sgs))
-                lods.append(dict(meshes=meshes))
+                lods.append(dict(meshes=meshes, switchPoint=switchPoint))
             models.append(dict(lods=lods))
         bps.append(dict(models=models))
     return hdr, bps

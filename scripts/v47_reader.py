@@ -145,7 +145,7 @@ class V47Reader:
             self.hdr[name] = rd(d, off)
         h = self.hdr
         if h["version"] != 47:
-            self.warn(f"version is {h['version']}, expected 47")
+            pass  # reported as an error in _validate()
         if h["length"] != len(d):
             self.err(f"length {h['length']} != file size {len(d)}")
         self.name = cstr(d, h["sznameindex"])
@@ -289,6 +289,38 @@ class V47Reader:
         if bad_tex:
             self.warn(f"texture name(s) unresolved at {bad_tex} "
                       f"(stride guess may be wrong)")
+        # 6. version must be 47 (Xbox). Confirmed 100% across the GT suite, so a
+        #    different version here means the MDL won't load on Xbox -> error.
+        if h["version"] != 47:
+            self.err(f"version is {h['version']}, must be 47 for Xbox")
+        # 7. bonetablebyname must be a valid permutation of 0..numbones-1.
+        #    Holds for 100% of GT models. A malformed table breaks the engine's
+        #    Studio_BoneIndexByName lookup -> bone_followers can silently fail to
+        #    resolve (the class of bug behind missing follower collision).
+        nb, v = len(self.bones), h.get("bonetablebynameindex", 0)
+        if nb and 0 < v < len(d) - nb:
+            tab = list(d[v:v + nb])
+            if sorted(tab) != list(range(nb)):
+                self.err(f"bonetablebyname is not a permutation of 0..{nb-1} "
+                         f"(got {tab[:8]}{'...' if nb > 8 else ''}) — bone-name "
+                         f"lookup will misbehave")
+        elif nb:
+            self.warn("bonetablebyname index out of range; not validated")
+
+    def check_phx(self, phx_path):
+        """Cross-file: the .phx checksum (@12) must equal the MDL checksum (@8),
+        or the engine loads the model but rejects the collision data (props fall
+        back to a single static solid). Call after parse()."""
+        import struct as _s
+        try:
+            pd = open(phx_path, "rb").read()
+        except OSError:
+            self.err(f"phx not found: {phx_path}"); return
+        mdl_ck = self.hdr["checksum"]
+        phx_ck = _s.unpack_from("<i", pd, 12)[0]
+        if phx_ck != mdl_ck:
+            self.err(f"phx checksum {phx_ck} != MDL checksum {mdl_ck} — "
+                     f"collision will be rejected")
 
     # ------------------------------------------------------------------
     def report(self):
@@ -356,10 +388,15 @@ def main(argv):
     path = argv[1]
     flag = argv[2] if len(argv) > 2 else ""
     r = V47Reader(path)
+    # optional: --phx <file> cross-checks the collision checksum against the MDL
+    if "--phx" in argv:
+        r.check_phx(argv[argv.index("--phx") + 1])
     if flag == "--json":
         print(json.dumps(r.to_dict(), indent=2))
     elif flag == "--check":
         print(f"{path}: {len(r.errors)} errors, {len(r.warnings)} warnings")
+        for e in r.errors:
+            print(f"  ! {e}")
         return 1 if r.errors else 0
     else:
         print(r.report())
