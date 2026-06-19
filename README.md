@@ -36,7 +36,7 @@ some QC options.
 
 | File | Role |
 |------|------|
-| `gt_diff_harness.py` | ground-truth byte-diff harness / regression guard (needs the PC+Xbox suite) |
+| `gt_diff_harness.py` | ground-truth byte-diff harness / regression guard (needs the PC+Xbox suite; you can source the PC suite from the Collectors' Edition.) |
 
 ## One command
 
