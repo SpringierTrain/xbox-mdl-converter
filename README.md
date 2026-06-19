@@ -1,36 +1,42 @@
 # PC -> Original Xbox model conversion
 
 This is an AI-Generated tool. I do not take any credit for the output presented here.
-Made using Opus 4.8
+Made using Opus 4.8 on Medium-High effort mode.
 
 Converts a PC Half-Life 2 model (studiohdr **v44**) to the Original Xbox format
-(studiohdr **v47**) so it loads and collides on a real Xbox / xemu via a zip1
+(studiohdr **v47**) so it loads and collides on a real Xbox/xemu via a XZip
 override. It transforms the shipped binary directly rather than decompiling and
 recompiling, so nothing is regenerated or approximated.
 
 ## Why this exists
 
-The Original Xbox build of HL2 used an internal Valve toolchain that never shipped
-in working form. The public Source SDK studiomdl still carries a `-xbox` flag, but
-it does **not** emit correct v47 models, and the community "Source SDK 2005" fork
-(which restored the Xbox **map** tools) currently **crashes** on model compile. So
+The Original Xbox build of HL2 used an internal Valve toolchain that never shipped. Most versions of studiomdl still carry a `-xbox` flag, but
+they do **not** emit correct v47 models (only the .xbox.vtx), and the fanmade work "Source SDK 2005" fork
+(which restored the Xbox **map** tools) doesn't work either. So
 until a native Xbox studiomdl is restored, going straight from the compiled PC
 binary to v47 is the working path for getting models onto the console. For a
 faithful 1:1 port of a shipped asset this is also *more* accurate than a
 decompile -> recompile round-trip, which loses vertex order, flex/delta data, and
 some QC options.
 
-## Files (keep all in one folder)
+`scripts/` (keep these together):
 
 | File | Role |
 |------|------|
 | `convert_xbox.py` | one-command driver (run this) |
-| `mdl_v44_to_v47.py` | MDL converter (v44 -> v47) |
+| `mdl_v44_to_v47.py` | MDL converter (v44 -> v47); meshid + fidelity guards |
 | `lod_convert.py` | VVD + VTX converter (drives the four below) |
 | `vvd_multilod.py`, `vtx_lod_extract.py`, `vtx_emit_skinned.py`, `cache_opt.py` | VVD/VTX internals |
 | `vtx_emit_multimesh.py` | multi-mesh VTX emit |
-| `v47_reader.py` | validator (`--check`) |
-| `phy2phx.py` | collision: `.phy` -> `.phx` (run automatically by the driver) |
+| `phy2phx.py` | collision: `.phy` -> `.phx` (auto-run by the driver; `--simplify-collision` opt-in) |
+| `ivp_collide.py` | IVP compact-surface parse/write + vphysics-style hull simplification |
+| `v47_reader.py` | validator (`--check`, `--phx <file>` checksum cross-check, `--json`) |
+
+`tools/`:
+
+| File | Role |
+|------|------|
+| `gt_diff_harness.py` | ground-truth byte-diff harness / regression guard (needs the PC+Xbox suite) |
 
 ## One command
 
@@ -52,9 +58,9 @@ It writes to `<out_dir>`:
 - `<name>.mdl`
 - `<name>.vvd`
 - `<name>.xbox.vtx`   <- note the dotted `.xbox.vtx` extension the Xbox uses
-- `<name>.phx`        <- only if a `.phy` was found
+- `<name>.phx`*        <- only if a `.phy` was found
 
-The MDL/VVD/VTX share one checksum (the engine refuses the model otherwise), the
+The MDL/VVD/VTX share one checksum, the
 `.phx` checksum is matched to it, and the MDL is validated automatically.
 
 ## What's solved
@@ -86,7 +92,7 @@ The MDL/VVD/VTX share one checksum (the engine refuses the model otherwise), the
   Qhull, the same hull library IVP used. The writer is byte-identical to Valve except a
   deliberately-conservative bounding box. Cuts the mean solid-size error vs Valve from
   ~488 B (verbatim) to ~162 B, with big wins on character ragdolls (Kleiner/Combine_Soldier
-  collision ~67% smaller, matching Valve's scale). Per-solid verbatim fallback when it
+  collision ~66% smaller, matching Valve's scale). Per-solid verbatim fallback when it
   wouldn't shrink (matches Valve). See `COLLISION_SIMPLIFY_PLAN.md`.
   NOT yet on by default: re-parses cleanly and is conservatively bounded, but the IVP
   `pierce_index` (raycast acceleration) is heuristic and this hasn't been hardware-verified
@@ -112,19 +118,15 @@ For any dynamic prop that needs its animations, use `--full`.
 
 ## Spawn it
 
-`prop_dynamic`, model `models/<path>/<name>.mdl`. Use `prop_physics` only if you
-also built a `.phx` and injected the prop_data keyvalues.
+Any model works*, for prop_dynamic and prop_physics(?) the model is loaded at runtime so you do *not* need to mount the custom models. For prop_static, you do need to mount the model, which should be downgraed to v44 studiohdr.
 
 ## Then package
 
 Drop the output files into your zip1 staging tree, mirroring the on-disc path
-(`models/props/turret_01.*`), add the material under `materials/...`, and pack:
+(`models/props/turret_01.*`), add the material under `materials/...`, and pack your zip.
 
-```
-start /wait python build_xzp.py --root ..\zip1_xbox --scan
-```
-
-then convert/rename the result to `zip1.xz_` as usual.
+Using xzptool, convert your xzp to xz_ and drop it into \GameMedia and if using a altogether custom zip, mount it in \LoaderMedia\install.txt
+You may also need to drop the xzp into: <cache dir (usually Z)>:\hl2\hl2x\ if it does not unpack.
 
 ## Doing it manually (what the driver runs)
 
@@ -142,8 +144,8 @@ python v47_reader.py      out_dir/turret_01.mdl --check
 
 ## Limitations / gotchas
 
-- **Material must already be in Xbox form.** A custom material left as a PC `.vtf`
-  won't render; it has to be on-disc or converted to the Xbox texture format.
+- **Material must be in Xbox form.** A custom material left as a PC `.vtf`
+  won't render on the custom model; it has to be converted to the Xbox texture format via **MareTF** or otherwise..
 - **Collision geometry: simplification now exists (`--simplify-collision`, opt-in).**
   Verbatim copy is still the default and is functionally correct but larger than Valve's.
   The simplifier (above) closes most of that gap for single-convex solids; multi-convex
