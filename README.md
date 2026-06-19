@@ -93,6 +93,23 @@ The MDL/VVD/VTX share one checksum (the engine refuses the model otherwise), the
   for collision behaviour — enable, test on hardware, then trust. Multi-convex single solids
   (ledge trees, e.g. some props) currently fall back to verbatim until tree-emit lands.
 
+## Conversion fidelity guards (so nothing breaks silently)
+
+Two classes of silent breakage are now caught at conversion time and reported:
+
+- **meshid collisions (the "LOS hang").** Every mesh must have a unique meshid or the
+  engine binds the wrong per-mesh draw state and the GPU stalls on first draw. The
+  converter now verifies this and auto-repairs to sequential ids (always valid) with a
+  warning if a collision is ever produced. This class of crash cannot ship silently.
+- **dropped animations/sequences (lossy reduce mode).** Default `reduce` mode keeps only
+  the first sequence + anim, which silently breaks a dynamic prop whose looping sequence
+  isn't first. The converter now prints exactly what was dropped, e.g.
+  `reduce mode kept 1/11 sequences (dropped 10; use --full to keep all)`. Sequence/anim
+  FLAGS (looping, autoplay, delta) are carried through the transform either way — the
+  risk was the whole sequence being dropped, not the flag.
+
+For any dynamic prop that needs its animations, use `--full`.
+
 ## Spawn it
 
 `prop_dynamic`, model `models/<path>/<name>.mdl`. Use `prop_physics` only if you

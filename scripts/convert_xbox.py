@@ -76,8 +76,8 @@ def main():
     # the MDL must keep every per-LOD vertex count too -> root_lod=0 (no flatten).
     mdl = _load("mdl_v44_to_v47")
     mdl_rl = 0 if r.get("all_lods") else r.get("rootLOD")
-    mdl.convert(pc_mdl, os.path.join(out_dir, name + ".mdl"), reduce=not full,
-                root_lod=mdl_rl)
+    minfo = mdl.convert(pc_mdl, os.path.join(out_dir, name + ".mdl"), reduce=not full,
+                        root_lod=mdl_rl)
 
     # 3) validate + checksum consistency
     rd = _load("v47_reader")
@@ -88,6 +88,8 @@ def main():
     cv = cks(os.path.join(out_dir, name + ".vvd"), 8)
     cx = cks(os.path.join(out_dir, name + ".xbox.vtx"), 16)
     print("MDL check:", len(chk.errors), "errors,", len(chk.warnings), "warnings")
+    for w in minfo.get("fidelity_warnings", []):
+        print("  fidelity:", w)
     print("checksums match:", cm == cv == cx, "(", cm, ")")
 
     # ---- collision: .phy -> .phx (only if a .phy sits next to the model) ----

@@ -232,7 +232,7 @@ def convert(pc_path,out_path,reduce=False,mat_override=None,pick_seq=None,root_l
     mesh_base=model_base+44*total_models
     out+=bytearray((mesh_base-bp_base)+64*total_meshes)
     bp_off=bp_base   # header writes numbodyparts u8@108 + bodypartindex i24@109 = bp_base
-    voff=0; mi_run=0; me_run=0
+    voff=0; mi_run=0; me_run=0; emitted_meshids=[]
     for b,bp in enumerate(pctree):
         bp_o=bp_base+b*12
         putname(bp_o+0,bp_o,bp["name"])
@@ -258,11 +258,29 @@ def convert(pc_path,out_path,reduce=False,mat_override=None,pick_seq=None,root_l
                 struct.pack_into("<i",out,mesh_off+4,model_off-mesh_off)    # modelindex (rel)
                 struct.pack_into("<i",out,mesh_off+8,nv_root)
                 struct.pack_into("<i",out,mesh_off+12,voff)                 # vertexoffset (pool-cumulative)
-                struct.pack_into("<i",out,mesh_off+28,pm.get("meshid",me_run-1))  # meshid (Xbox @+28); engine binds per-mesh draw state by this — must be unique or 2+ mesh models hang on draw
+                mid=pm.get("meshid",me_run-1)
+                struct.pack_into("<i",out,mesh_off+28,mid)  # meshid (Xbox @+28); engine binds per-mesh draw state by this — must be unique or 2+ mesh models hang on draw
+                emitted_meshids.append((mesh_off,mid))
                 voff+=nv_root
                 flat=list(pm["numLODVertexes"])
                 for k in range(rl): flat[k]=nv_root
                 for j in range(8): struct.pack_into("<H",out,mesh_off+48+2*j,flat[j]&0xFFFF)
+    # ---- fidelity guard: meshids MUST be unique per model or the engine binds the
+    # wrong per-mesh draw state and the GPU stalls on first draw (the "LOS hang").
+    # If anything produced a collision, repair to sequential (always valid) and flag it.
+    fidelity_warnings=[]
+    mids=[m for _,m in emitted_meshids]
+    if len(set(mids))!=len(mids):
+        fidelity_warnings.append(f"meshid collision {mids} -> auto-repaired to sequential "
+                                 f"(would have caused a GPU/LOS hang)")
+        for seq,(moff,_) in enumerate(emitted_meshids):
+            struct.pack_into("<i",out,moff+28,seq)
+    # ---- lossy-drop guard: reduce mode keeps only the first sequence/anim. Report it so
+    # a dynamic prop that needs a later (e.g. looping) sequence isn't silently broken.
+    if na_out<na: fidelity_warnings.append(f"reduce mode kept {na_out}/{na} animations "
+                                           f"(dropped {na-na_out}; use --full to keep all)")
+    if ns_out<ns: fidelity_warnings.append(f"reduce mode kept {ns_out}/{ns} sequences "
+                                           f"(dropped {ns-ns_out}; use --full to keep all)")
     # ---- textures ----
     pad(4); tex_off=len(out)
     for tname in texs:
@@ -306,7 +324,9 @@ def convert(pc_path,out_path,reduce=False,mat_override=None,pick_seq=None,root_l
     if kvsz>0: i32(152,kv_off); i32(156,kvsz)
     i32(192,btbn)
     open(out_path,"wb").write(out)
-    return dict(size=len(out),bones=nb,anims=na,seqs=ns,textures=ntex)
+    return dict(size=len(out),bones=nb,anims=na,seqs=ns,
+                anims_emitted=na_out,seqs_emitted=ns_out,
+                meshes=len(emitted_meshids),fidelity_warnings=fidelity_warnings)
 
 if __name__=="__main__":
     import sys; print(convert(sys.argv[1],sys.argv[2]))
