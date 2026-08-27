@@ -69,68 +69,22 @@ It writes to `<out_dir>`:
 The MDL/VVD/VTX share one checksum, the
 `.phx` checksum is matched to it, and the MDL is validated automatically.
 
-## What's solved
-
-- **The line-of-sight / first-draw GPU hang** — root-caused to the per-mesh
-  `meshid` (stored at Xbox mesh `+28`, vs PC `+32`). The converter wrote 0 for
-  every mesh, so any 2+ mesh model collided draw state and stalled the GPU
-  pushbuffer. Now carried/sequenced correctly. Confirmed on real hardware.
-- **Multi-mesh / multi-LOD models** — contiguous VTX layout + LOD collapse fixes,
-  passing a 2134-model regression suite.
-- **The v44 -> v47 bone struct** — i16 parent, bone flags @140, surfaceprop @152,
-  contents @156, plus the compacted field layout. Applies to every multi-bone model.
-- **The `.phx` collision format** — the Xbox replaces the PHY's text keyvalues with
-  a binary block (lead = block count; `0x02` names / `0x04` solids / `0x05`
-  constraints; truncated float16 mass/volume; surfaceprop table rebuilt from the full
-  2033-pair suite). The *keyvalue block* is byte-exact on ~75% of pairs; the residual
-  is a build-time names-block choice on single-solid props that isn't in any input file
-  and has no functional effect (a single solid binds to the root regardless). The *full*
-  `.phx` file is never byte-exact because the solid geometry is verbatim-copied while
-  Valve recompiles it (see Limitations).
-- **Collision geometry simplification (opt-in, `--simplify-collision`).** Ports Valve's
-  vphysics `SimplifyCollide` in pure Python: parse the IVP compact-surface, reduce each
-  convex hull via plane-clipping to a tolerance, and re-emit valid IVP — using scipy's
-  Qhull, the same hull library IVP used. The writer is byte-identical to Valve except a
-  deliberately-conservative bounding box. Cuts the mean solid-size error vs Valve from
-  ~488 B (verbatim) to ~162 B, with big wins on character ragdolls (Kleiner/Combine_Soldier
-  collision ~66% smaller, matching Valve's scale). Per-solid verbatim fallback when it
-  wouldn't shrink (matches Valve). See `COLLISION_SIMPLIFY_PLAN.md`.
-  NOT yet on by default: re-parses cleanly and is conservatively bounded, but the IVP
-  `pierce_index` (raycast acceleration) is heuristic and this hasn't been hardware-verified
-  for collision behaviour — enable, test on hardware, then trust. Multi-convex single solids
-  (ledge trees, e.g. some props) currently fall back to verbatim until tree-emit lands.
-
-## Conversion fidelity guards (so nothing breaks silently)
-
-Two classes of silent breakage are now caught at conversion time and reported:
-
-- **meshid collisions (the "LOS hang").** Every mesh must have a unique meshid or the
-  engine binds the wrong per-mesh draw state and the GPU stalls on first draw. The
-  converter now verifies this and auto-repairs to sequential ids (always valid) with a
-  warning if a collision is ever produced. This class of crash cannot ship silently.
-- **dropped animations/sequences (lossy reduce mode).** Default `reduce` mode keeps only
-  the first sequence + anim, which silently breaks a dynamic prop whose looping sequence
-  isn't first. The converter now prints exactly what was dropped, e.g.
-  `reduce mode kept 1/11 sequences (dropped 10; use --full to keep all)`. Sequence/anim
-  FLAGS (looping, autoplay, delta) are carried through the transform either way — the
-  risk was the whole sequence being dropped, not the flag.
-
-For any dynamic prop that needs its animations, use `--full`.
-
-## Spawn it
-
-Most models work, for prop_dynamic, prop_static and prop_physics you need to mount the model (see below), which should be downgraded to v44 studiohdr. 
-You can spawn it with console commands or have a custom map with it already loaded.
+For any dynamic prop that needs its animations, use the `--full` parameter.
 
 ## Then package
 
-Drop the output files into your zip1 staging tree, mirroring the path Hammer uses
-(`models/props/turret_01.mdl`) for example, add the material under `materials/models/...`, 
+Drop the output files into your zip1 staging tree, mirroring the path your prop uses in Hammer
+(`models/props/turret_01.mdl`) for example, add the material under `materials/models/...` (you can see where models pull their materials from using [VPKEdit](https://github.com/craftablescience/VPKEdit)!, 
 and then convert using [MakeXZIP](https://github.com/FelipeDeveloper07/XZP-Tool-Fix-V6-HL2x/releases/tag/HL2x), 
 however do note you may need to modify the batch file for your own usage.
 
-Using [xzptool](https://github.com/craftablescience/xzptool), convert your xzp to xz_ and drop it into \GameMedia and if using a altogether custom zip (not included in the base game, for example zip1_xbox.xz_), mount it in \LoaderMedia\install.txt with an extra line.
-You may also need to drop the **xzp** (NOT xz_) into: `<cache letter>\HL2\HL2x\` if it does not unpack correctly (i.e, hangs on the loading screen).
+Using [xzptool](https://github.com/craftablescience/xzptool), convert your xzp to xz_ and drop it into `<game_installation>\GameMedia` and if using a fully custom zip (not included in the base game, for example zip1_xbox.xz_), mount it in \LoaderMedia\install.txt with an extra line.
+You may also need to drop the **xzp** (NOT xz_) into: `<cache letter>\HL2\HL2x\` if it does not unpack correctly (i.e, hangs on the loading screen) which is the case for xemu a lot of times.
+
+## Test the model
+
+For this converter, most models work***, for prop_dynamic, prop_static and prop_physics you need to mount the model (see below), which should be downgraded to v44 studiohdr. 
+You can spawn it with console commands or have a custom map with it already loaded.
 
 ## Doing it manually (what the driver runs)
 
