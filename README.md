@@ -74,7 +74,7 @@ For any dynamic prop that needs its animations, use the `--full` parameter.
 ## Then package
 
 Drop the output files into your zip1 staging tree, mirroring the path your prop uses in Hammer
-(`models/props/turret_01.mdl`) for example, add the material under `materials/models/...` (you can see where models pull their materials from using [VPKEdit](https://github.com/craftablescience/VPKEdit)!, 
+(`models/props/turret_01.mdl`) for example, add the material under `materials/models/...` (you can see where models pull their materials from using [VPKEdit!](https://github.com/craftablescience/VPKEdit)), 
 and then convert using [MakeXZIP](https://github.com/FelipeDeveloper07/XZP-Tool-Fix-V6-HL2x/releases/tag/HL2x), 
 however do note you may need to modify the batch file for your own usage.
 
