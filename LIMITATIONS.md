@@ -13,7 +13,7 @@
   warning). Affects animated-NPC ragdolls — joints are looser than Valve's until the
   non-zero limit encoding is cracked. The model still converts and collides.
 - **Bone-follower edge case (open).** A custom prop with exactly two bones, *both*
-  bone followers, parent->child with a single constraint (see `GUNSHIP_TAIL_TODO.md`)
+  bone followers, parent->child with a single constraint (see [GUNSHIP_TAIL_TODO.md](GUNSHIP_TAIL_TODO.md))
   only instantiates solid 0 on Xbox; the second follower isn't created...
   Every structural field matches working props and there's no Valve Xbox build of
   it to diff against, so it's unsolved. For now, merge the collision into a single solid.
