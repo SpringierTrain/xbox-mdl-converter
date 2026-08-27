@@ -1,20 +1,24 @@
-# PC -> Original Xbox model conversion
+# Half Life 2 XBox PC -> XBox model conversion
+
+Please note this is NOT for "The Orange Box" it is for the 2005 release of Half-Life 2 for the Original XBox.
 
 This is an AI-Generated tool. I do not take any credit for the output presented here.
 Made using Opus 4.8 on Medium-High effort mode.
 
-Converts a PC Half-Life 2 model (studiohdr **v44**) to the Original Xbox format
-(studiohdr **v47**) so it loads and collides on a real Xbox/xemu via a XZip
+This README expects you to know the fundamentals of HL2 XBox modding.
+
+Converts a PC Half-Life 2 model (ideally, studiohdr v44) to the Original XBox format
+(studiohdr v47) so it loads nicely on real hardware (or xemu) via a XZP
 override. It transforms the shipped binary directly rather than decompiling and
 recompiling, so nothing is regenerated or approximated.
 
-## Why this exists
+## Why does this exist?
 
-The Original Xbox build of HL2 used an internal Valve toolchain that never shipped. Most versions of studiomdl still carry a `-xbox` flag, but
-they do **not** emit correct v47 models (only the .xbox.vtx), and the fanmade work "Source SDK 2005" fork
-(which restored the Xbox **map** tools) doesn't work either. So
-until a native Xbox studiomdl is restored, going straight from the compiled PC
-binary to v47 is the working path for getting models onto the console. For a
+The Original XBox build of HL2 used an internal Valve toolchain that never shipped. 
+Some versions of studiomdl that were based on the 2006 SDK still carry a `-xbox` flag, 
+but they do **not** produce correct v47 models (only the .xbox.vtx, which is still incorrect). 
+Until a native XBox studiomdl is restored (or obtained via other means), going straight from 
+the compiled PC binary to v47 is likely the best path for getting custom models onto the console. For a
 faithful 1:1 port of a shipped asset this is also *more* accurate than a
 decompile -> recompile round-trip, which loses vertex order, flex/delta data, and
 some QC options.
@@ -36,12 +40,14 @@ some QC options.
 
 | File | Role |
 |------|------|
-| `gt_diff_harness.py` | ground-truth byte-diff harness / regression guard (needs the PC+Xbox suite; you can source the PC suite from the Collectors' Edition.) |
+| `gt_diff_harness.py` | ground-truth byte-diff harness / regression guard (needs the PC+Xbox suite; you can source the PC suite from the Half-Life 2 2004 Collectors' Edition.) |
 
-## One command
+## Automatic conversion of model
+
+Ideally, use `--lod 2` to match the other XBox models, unless your model is already low poly enough.
 
 ```
-python convert_xbox.py <pc_model_basepath> <out_dir> [--full] [--lod N]
+python convert_xbox.py <pc_model_path> <out_dir> [--full] [--lod N]
 ```
 
 `<pc_model_basepath>` is the path with **no extension**, e.g.
@@ -80,12 +86,7 @@ The MDL/VVD/VTX share one checksum, the
   is a build-time names-block choice on single-solid props that isn't in any input file
   and has no functional effect (a single solid binds to the root regardless). The *full*
   `.phx` file is never byte-exact because the solid geometry is verbatim-copied while
-  Valve recompiles it (see Limitations). Bone-follower collision is confirmed working on
-  hardware.
-- **phy2phx never crashes.** Across all 1874 `.phy` files in the suite it converts 100%
-  (was crashing on ~8% — every NPC ragdoll, because the surfaceprop table was missing
-  `flesh`). Unknown surfaceprops fall back to `default` and non-zero ragdoll joint limits
-  are flattened to zero-limit, each emitted with a warning rather than an exception.
+  Valve recompiles it (see Limitations).
 - **Collision geometry simplification (opt-in, `--simplify-collision`).** Ports Valve's
   vphysics `SimplifyCollide` in pure Python: parse the IVP compact-surface, reduce each
   convex hull via plane-clipping to a tolerance, and re-emit valid IVP — using scipy's
@@ -118,56 +119,58 @@ For any dynamic prop that needs its animations, use `--full`.
 
 ## Spawn it
 
-Any model works*, for prop_dynamic and prop_physics(?) the model is loaded at runtime so you do *not* need to mount the custom models. For prop_static, you do need to mount the model, which should be downgraed to v44 studiohdr.
+Most models work, for prop_dynamic, prop_static and prop_physics you need to mount the model (see below), which should be downgraded to v44 studiohdr. 
+You can spawn it with console commands or have a custom map with it already loaded.
 
 ## Then package
 
-Drop the output files into your zip1 staging tree, mirroring the on-disc path
-(`models/props/turret_01.*`), add the material under `materials/...`, and pack your zip.
+Drop the output files into your zip1 staging tree, mirroring the path Hammer uses
+(`models/props/turret_01.mdl`) for example, add the material under `materials/models/...`, 
+and then convert using [MakeXZIP](https://github.com/FelipeDeveloper07/XZP-Tool-Fix-V6-HL2x/releases/tag/HL2x), 
+however do note you may need to modify the batch file for your own usage.
 
-Using xzptool, convert your xzp to xz_ and drop it into \GameMedia and if using a altogether custom zip, mount it in \LoaderMedia\install.txt
-You may also need to drop the xzp into: <cache dir (usually Z)>:\hl2\hl2x\ if it does not unpack.
+Using [xzptool](https://github.com/craftablescience/xzptool), convert your xzp to xz_ and drop it into \GameMedia and if using a altogether custom zip (not included in the base game, for example zip1_xbox.xz_), mount it in \LoaderMedia\install.txt with an extra line.
+You may also need to drop the **xzp** (NOT xz_) into: `<cache letter>\HL2\HL2x\` if it does not unpack correctly (i.e, hangs on the loading screen).
 
 ## Doing it manually (what the driver runs)
 
 ```
-python lod_convert.py     models/props/turret_01      out_dir   # -> .vvd + .xbox.vtx
-python mdl_v44_to_v47.py  models/props/turret_01.mdl  out_dir/turret_01.mdl
-python phy2phx.py         models/props/turret_01.phy  out_dir/turret_01.phx   # if a .phy exists
-python v47_reader.py      out_dir/turret_01.mdl --check
+python lod_convert.py     <path/to/model>      <out_dir> # -> .vvd + .xbox.vtx
+python mdl_v44_to_v47.py  <path/to/model>      <out_dir>
+python phy2phx.py         <path/to/model>      <out_dir> # if a .phy exists
+python v47_reader.py      <out_dir> --check
 ```
 
 `mdl_v44_to_v47.convert(pc, out, reduce=True, mat_override=None)`:
-- `reduce=True` (driver default) emits one idle anim + one seq — the proven build.
-  `--full` emits all anims/seqs and is experimental (see Limitations).
+- `reduce=True` (driver default) emits one idle anim + one seq. Use if it doesn't work otherwise.
+  `--full` emits all anims/seqs. Very experimental (see Limitations).
 - `mat_override=("texname","cdpath")` repoints the model at a different material.
 
-## Limitations / gotchas
+## Limitations
 
-- **Material must be in Xbox form.** A custom material left as a PC `.vtf`
-  won't render on the custom model; it has to be converted to the Xbox texture format via **MareTF** or otherwise..
+- **Material must be in Xbox form.** A material left in your XZip staging area as a PC `.vtf`
+  won't render (instead will show the iconic purple and black checkers) on the custom model;
+  it *has* to be converted to the Xbox texture format via [MareTF](https://github.com/craftablescience/MareTF)
 - **Collision geometry: simplification now exists (`--simplify-collision`, opt-in).**
   Verbatim copy is still the default and is functionally correct but larger than Valve's.
   The simplifier (above) closes most of that gap for single-convex solids; multi-convex
   ledge-tree solids still copy verbatim. Byte-identical to Valve isn't the target (Qhull
-  vertex ordering differs); Valve-like sizes + valid IVP is. Needs hardware validation
-  before becoming default.
+  vertex ordering differs); Valve-like sizes + valid IVP is.
 - **Non-zero ragdoll joint limits are flattened to zero-limit** (emitted with a
   warning). Affects animated-NPC ragdolls — joints are looser than Valve's until the
   non-zero limit encoding is cracked. The model still converts and collides.
 - **Bone-follower edge case (open).** A custom prop with exactly two bones, *both*
-  bone followers, parent->child with a single constraint (the "crashedgunship tail"
-  case) only instantiates solid 0 on Xbox; the second follower isn't created.
+  bone followers, parent->child with a single constraint (see `GUNSHIP_TAIL_TODO.md`)
+  only instantiates solid 0 on Xbox; the second follower isn't created...
   Every structural field matches working props and there's no Valve Xbox build of
-  it to diff against, so it's unsolved. Workaround: author the collision as a single
-  merged solid. See `GUNSHIP_TAIL_TODO.md`.
+  it to diff against, so it's unsolved. For now, merge the collision into a single solid.
 - **`--full` multi-anim is experimental.** Animation-holder models with hundreds of
   sequences can overflow a u16 pack; not yet guarded. A separate autoplay DELTA-aim
   angle bug is known. Single-sequence (`reduce`) builds are the reliable path.
 - **Attachments / flexes / pose params** are dropped (not needed to render).
 
-## Ground truth
+## The lesson
 
 Real Xbox hardware is the oracle; xemu is a secondary validator. Every fix here was
-confirmed by byte-diffing against Valve's shipped Xbox files — that comparison, not
-reasoning in the abstract, is what cracked each format.
+confirmed by byte-diffing against Valve's shipped Xbox files. That comparison, not
+reasoning in the abstract, is what cracked each format!
